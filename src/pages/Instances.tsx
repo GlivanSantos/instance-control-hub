@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchInstances } from '@/services/evolutionApiService';
 import { Instance } from '@/types';
+import { DbInstance } from '@/types/supabase';
 
 const Instances = () => {
   const { user } = useAuth();
@@ -23,54 +24,60 @@ const Instances = () => {
     const checkUserRole = async () => {
       if (!user) return;
       
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-      
-      if (error) {
-        console.error('Error fetching user role:', error);
-        return;
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+        
+        if (error) {
+          console.error('Error fetching user role:', error);
+          return;
+        }
+        
+        setIsAdmin(data?.role === 'admin');
+      } catch (err) {
+        console.error("Failed to check user role:", err);
       }
-      
-      setIsAdmin(data.role === 'admin');
     };
     
     checkUserRole();
   }, [user]);
   
-  // Fetch instances from API
+  // Fetch instances from database
   useEffect(() => {
     const getInstances = async () => {
       setLoading(true);
       
       try {
-        // Get instances from database first
-        let { data: dbInstances, error } = await supabase
+        // Get instances from database 
+        const { data, error } = await supabase
           .from('instances')
           .select(`
             *,
-            clients(id, name)
+            clients (id, name)
           `);
         
         if (error) throw error;
+        
+        // Handle the case where data might be null
+        let dbInstances = data || [];
         
         // If user is client, filter instances
         if (!isAdmin && user) {
           dbInstances = dbInstances.filter(instance => {
             // Find instances associated with this user
-            // This filtering logic may need to be adjusted based on your data structure
             return true; // Placeholder logic
           });
         }
         
         // Format instances to match our type
-        const formattedInstances: Instance[] = dbInstances.map(instance => ({
+        const formattedInstances: Instance[] = dbInstances.map((instance: any) => ({
           id: instance.id,
           name: instance.name,
           clientId: instance.client_id,
-          clientName: instance.clients.name,
+          clientName: instance.clients?.name || 'Unknown',
           status: instance.status,
           type: instance.type,
           cpu: instance.cpu,
