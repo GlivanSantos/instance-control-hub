@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -6,11 +5,12 @@ import InstanceChart from '@/components/dashboard/InstanceChart';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { mockInstances, generateInstanceMetrics } from '@/services/mockData';
 import { Instance, InstanceMetrics } from '@/types';
 import { Database, Server, ArrowLeft, Play, Square, RefreshCw, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { Tables } from '@/types/database';
 
 const InstanceDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -21,24 +21,90 @@ const InstanceDetail = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Find instance by id
-    const foundInstance = mockInstances.find(i => i.id === id);
-    if (foundInstance) {
-      setInstance(foundInstance);
-      setMetrics(generateInstanceMetrics(id || ''));
-    } else {
-      navigate('/instances');
-    }
+    const fetchInstanceData = async () => {
+      if (!id) return;
+
+      // Fetch instance data
+      const { data: instanceData, error: instanceError } = await supabase
+        .from('instances')
+        .select('*, clients(name)')
+        .eq('id', id)
+        .single();
+
+      if (instanceError) {
+        console.error('Error fetching instance data:', instanceError);
+        toast.error('Failed to load instance data');
+        navigate('/instances');
+        return;
+      }
+
+      if (instanceData) {
+        // Map Supabase data to our Instance type
+        const mappedInstance: Instance = {
+          id: instanceData.id,
+          name: instanceData.name,
+          clientId: instanceData.client_id || '',
+          clientName: instanceData.clients?.name || 'Unknown Client',
+          status: instanceData.status as 'running' | 'stopped' | 'error',
+          type: instanceData.type,
+          cpu: instanceData.cpu,
+          memory: instanceData.memory,
+          storage: instanceData.storage,
+          createdAt: instanceData.created_at,
+          lastUpdated: instanceData.updated_at,
+          ipAddress: instanceData.ip_address || '',
+          region: instanceData.region
+        };
+        
+        setInstance(mappedInstance);
+      }
+
+      // Fetch metrics data
+      const { data: metricsData, error: metricsError } = await supabase
+        .from('instance_metrics')
+        .select('*')
+        .eq('instance_id', id)
+        .single();
+
+      if (metricsError && metricsError.code !== 'PGRST116') {
+        console.error('Error fetching metrics data:', metricsError);
+        toast.error('Failed to load metrics data');
+        return;
+      }
+
+      if (metricsData) {
+        // Map Supabase data to our InstanceMetrics type
+        const mappedMetrics: InstanceMetrics = {
+          cpu: metricsData.cpu_usage || [],
+          memory: metricsData.memory_usage || [],
+          storage: metricsData.storage_usage || [], 
+          network: metricsData.network_usage || [],
+          timestamps: metricsData.timestamps || []
+        };
+        
+        setMetrics(mappedMetrics);
+      } else {
+        // If no metrics found, create empty metrics
+        setMetrics({
+          cpu: [],
+          memory: [],
+          storage: [],
+          network: [],
+          timestamps: []
+        });
+      }
+    };
+
+    fetchInstanceData();
   }, [id, navigate]);
 
-  const handleAction = (action: 'start' | 'stop' | 'restart') => {
-    if (!instance) return;
+  const handleAction = async (action: 'start' | 'stop' | 'restart') => {
+    if (!instance || !id) return;
     
     setLoading(true);
     
-    // Simulate API call delay
-    setTimeout(() => {
-      let newStatus: 'running' | 'stopped' | 'error' = instance.status;
+    try {
+      let newStatus: 'running' | 'stopped' = instance.status as 'running' | 'stopped';
       let message = '';
       
       switch (action) {
@@ -56,13 +122,28 @@ const InstanceDetail = () => {
           break;
       }
       
-      setInstance({ ...instance, status: newStatus });
+      // Update the instance status in the database
+      const { error } = await supabase
+        .from('instances')
+        .update({ status: newStatus })
+        .eq('id', id);
+      
+      if (error) {
+        throw new Error(error.message);
+      }
+      
+      // Update local state
+      setInstance(prev => prev ? { ...prev, status: newStatus } : null);
       toast.success(message);
+    } catch (error) {
+      console.error('Error performing action:', error);
+      toast.error('Failed to perform action');
+    } finally {
       setLoading(false);
-    }, 1500);
+    }
   };
 
-  if (!instance || !metrics) {
+  if (!instance) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
@@ -209,30 +290,34 @@ const InstanceDetail = () => {
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Monitoring</h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <InstanceChart
-              title="CPU Usage (%)"
-              metrics={metrics}
-              dataKey="cpu"
-              color="#8b5cf6"
-            />
-            <InstanceChart
-              title="Memory Usage (%)"
-              metrics={metrics}
-              dataKey="memory"
-              color="#1EAEDB"
-            />
-            <InstanceChart
-              title="Storage Usage (%)"
-              metrics={metrics}
-              dataKey="storage"
-              color="#7E69AB"
-            />
-            <InstanceChart
-              title="Network Traffic (Mbps)"
-              metrics={metrics}
-              dataKey="network"
-              color="#10B981"
-            />
+            {metrics && (
+              <>
+                <InstanceChart
+                  title="CPU Usage (%)"
+                  metrics={metrics}
+                  dataKey="cpu"
+                  color="#8b5cf6"
+                />
+                <InstanceChart
+                  title="Memory Usage (%)"
+                  metrics={metrics}
+                  dataKey="memory"
+                  color="#1EAEDB"
+                />
+                <InstanceChart
+                  title="Storage Usage (%)"
+                  metrics={metrics}
+                  dataKey="storage"
+                  color="#7E69AB"
+                />
+                <InstanceChart
+                  title="Network Traffic (Mbps)"
+                  metrics={metrics}
+                  dataKey="network"
+                  color="#10B981"
+                />
+              </>
+            )}
           </div>
         </div>
       </div>

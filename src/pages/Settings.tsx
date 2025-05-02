@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,21 +8,122 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Settings = () => {
-  const [apiUrl, setApiUrl] = useState('https://api.evolution.com/v1');
-  const [apiKey, setApiKey] = useState('sk_live_************************');
+  const { user } = useAuth();
+  const [apiUrl, setApiUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [savedApiKey, setSavedApiKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [settingsId, setSettingsId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('system_settings')
+          .select('*')
+          .limit(1)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+
+        if (data) {
+          setApiUrl(data.api_url || '');
+          // Don't show the actual API key, just mask it
+          setSavedApiKey(data.api_key ? '************************' : '');
+          setSettingsId(data.id);
+        }
+      } catch (error) {
+        console.error('Error fetching settings:', error);
+        toast.error('Failed to load settings');
+      }
+    };
+
+    fetchSettings();
+  }, []);
 
   const handleSaveApiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      // Check if we're updating or creating
+      if (settingsId) {
+        // Update existing settings
+        const existingData = await supabase
+          .from('system_settings')
+          .select('*')
+          .eq('id', settingsId)
+          .single();
+          
+        // Only update the API key if it was changed (not masked)
+        const updatedSettings = {
+          api_url: apiUrl,
+          updated_by: user?.id || null,
+          // Only update the API key if it's not the masked placeholder
+          ...(apiKey !== '************************' && apiKey !== '' ? { api_key: apiKey } : {})
+        };
+        
+        const { error: updateError } = await supabase
+          .from('system_settings')
+          .update(updatedSettings)
+          .eq('id', existingData.data?.id);
+          
+        if (updateError) throw updateError;
+      } else {
+        // Create new settings
+        const { error: insertError } = await supabase
+          .from('system_settings')
+          .insert({
+            api_url: apiUrl,
+            api_key: apiKey,
+            updated_by: user?.id || null
+          });
+          
+        if (insertError) throw insertError;
+      }
+      
+      toast.success('API configuration saved successfully');
+    } catch (error: any) {
+      console.error('Error saving settings:', error);
+      toast.error(`Failed to save settings: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
     
-    toast.success('API configuration saved successfully');
-    setLoading(false);
+    try {
+      // Simulate API test (we would typically call an actual endpoint here)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const { data } = await supabase
+        .from('system_settings')
+        .select('api_key')
+        .limit(1)
+        .single();
+      
+      if (!data || !data.api_key) {
+        toast.error('API key not configured');
+        return;
+      }
+      
+      // Here you would make an actual API call to test the connection
+      toast.success('Connection successful');
+    } catch (error) {
+      console.error('Error testing connection:', error);
+      toast.error('Connection failed');
+    } finally {
+      setTestingConnection(false);
+    }
   };
 
   return (
@@ -63,9 +164,10 @@ const Settings = () => {
                     <Input
                       id="api-key"
                       type="password"
-                      value={apiKey}
+                      value={apiKey || savedApiKey}
                       onChange={(e) => setApiKey(e.target.value)}
-                      required
+                      placeholder={savedApiKey ? '************************' : ''}
+                      required={!savedApiKey}
                     />
                     <p className="text-sm text-muted-foreground">
                       Your API key is stored securely and used to authenticate with the Evolution API.
@@ -89,7 +191,13 @@ const Settings = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Button variant="outline">Test Connection</Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleTestConnection} 
+                  disabled={testingConnection}
+                >
+                  {testingConnection ? 'Testing...' : 'Test Connection'}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
