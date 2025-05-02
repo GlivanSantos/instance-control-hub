@@ -10,12 +10,11 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { DbSystemSettings } from '@/types/supabase';
 
 const Settings = () => {
   const { user } = useAuth();
-  const [apiUrl, setApiUrl] = useState('https://evo.devautomatizadores.com.br/manager');
-  const [apiKey, setApiKey] = useState('19431797ce04903c5499b0a30008c627');
+  const [apiUrl, setApiUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
 
@@ -26,21 +25,17 @@ const Settings = () => {
         const { data, error } = await supabase
           .from('system_settings')
           .select('api_url, api_key')
-          .maybeSingle();
+          .limit(1)
+          .single();
         
-        if (error) {
-          console.error('Error fetching settings:', error);
-          return;
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+          throw error;
         }
         
         if (data) {
-          setApiUrl(data.api_url || 'https://evo.devautomatizadores.com.br/manager');
-          // For security, don't show full API key if it's already set
-          if (data.api_key) {
-            setApiKey(data.api_key.replace(/^(.{4})(.*)(.{4})$/, '$1•••••••••••$3'));
-          } else {
-            setApiKey('19431797ce04903c5499b0a30008c627');
-          }
+          setApiUrl(data.api_url);
+          // For security, don't show full API key
+          setApiKey(data.api_key.replace(/^(.{4})(.*)(.{4})$/, '$1•••••••••••$3'));
         }
       } catch (error) {
         console.error('Error fetching settings:', error);
@@ -61,16 +56,14 @@ const Settings = () => {
       const { data: existingData, error: existingError } = await supabase
         .from('system_settings')
         .select('id')
-        .maybeSingle();
+        .limit(1);
       
-      if (existingError) {
-        console.error('Error checking existing settings:', existingError);
-      }
+      if (existingError) throw existingError;
       
       // If apiKey contains bullets (•), it means user didn't change it, so don't update it
       const shouldUpdateKey = !apiKey.includes('•');
       
-      if (existingData?.id) {
+      if (existingData && existingData.length > 0) {
         // Update existing record
         const updateData: { api_url: string; api_key?: string; updated_by: string } = {
           api_url: apiUrl,
@@ -84,7 +77,7 @@ const Settings = () => {
         const { error } = await supabase
           .from('system_settings')
           .update(updateData)
-          .eq('id', existingData.id);
+          .eq('id', existingData[0].id);
         
         if (error) throw error;
       } else {
@@ -112,27 +105,19 @@ const Settings = () => {
   const handleTestConnection = async () => {
     setTestLoading(true);
     try {
-      // Get current settings either from form or database
-      let testApiUrl = apiUrl;
-      let testApiKey = apiKey;
+      // Get current settings from database
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('api_url, api_key')
+        .limit(1)
+        .single();
       
-      // If apiKey contains bullets (•), get the real key from database
-      if (apiKey.includes('•')) {
-        const { data, error } = await supabase
-          .from('system_settings')
-          .select('api_key')
-          .maybeSingle();
-        
-        if (error) throw error;
-        if (data) {
-          testApiKey = data.api_key;
-        }
-      }
+      if (error) throw error;
       
       // Test the API connection
-      const response = await fetch(`${testApiUrl}/instances`, {
+      const response = await fetch(`${data.api_url}/instances`, {
         headers: {
-          'Authorization': `Bearer ${testApiKey}`,
+          'Authorization': `Bearer ${data.api_key}`,
           'Content-Type': 'application/json'
         }
       });

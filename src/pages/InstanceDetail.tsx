@@ -12,7 +12,6 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchInstanceDetails, startInstance, stopInstance, restartInstance, fetchInstanceMetrics } from '@/services/evolutionApiService';
-import { DbInstance, DbInstanceMetrics } from '@/types/supabase';
 
 const InstanceDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -35,25 +34,19 @@ const InstanceDetail = () => {
           .from('instances')
           .select(`
             *,
-            clients (id, name)
+            clients(id, name)
           `)
           .eq('id', id)
-          .maybeSingle();
+          .single();
           
         if (error) throw error;
-        
-        if (!data) {
-          toast.error('Instance not found');
-          navigate('/instances');
-          return;
-        }
         
         // Format instance to match our type
         const formattedInstance: Instance = {
           id: data.id,
           name: data.name,
           clientId: data.client_id,
-          clientName: data.clients?.name || 'Unknown',
+          clientName: data.clients.name,
           status: data.status,
           type: data.type,
           cpu: data.cpu,
@@ -73,7 +66,8 @@ const InstanceDetail = () => {
           .select('*')
           .eq('instance_id', id)
           .order('created_at', { ascending: false })
-          .maybeSingle();
+          .limit(1)
+          .single();
         
         if (!metricsError && metricsData) {
           setMetrics({
@@ -142,9 +136,6 @@ const InstanceDetail = () => {
             newStatus = 'running';
             message = 'Instance restarted successfully';
             break;
-          default:
-            newStatus = 'running';
-            message = 'Action completed successfully';
         }
         
         // Update instance status
