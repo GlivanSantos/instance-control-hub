@@ -30,9 +30,10 @@ import { useNavigate } from 'react-router-dom';
 interface InstancesListProps {
   instances: Instance[];
   isAdmin?: boolean;
+  isLoading?: boolean;
 }
 
-const InstancesList: React.FC<InstancesListProps> = ({ instances, isAdmin = false }) => {
+const InstancesList: React.FC<InstancesListProps> = ({ instances, isAdmin = false, isLoading = false }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -117,7 +118,16 @@ const InstancesList: React.FC<InstancesListProps> = ({ instances, isAdmin = fals
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredInstances.length === 0 ? (
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={isAdmin ? 7 : 6} className="h-24 text-center">
+                  <div className="flex justify-center items-center h-full">
+                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                    <span className="ml-2">Loading instances...</span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : filteredInstances.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={isAdmin ? 7 : 6} className="h-24 text-center">
                   No instances found.

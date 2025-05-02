@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,21 +8,131 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Settings = () => {
-  const [apiUrl, setApiUrl] = useState('https://api.evolution.com/v1');
-  const [apiKey, setApiKey] = useState('sk_live_************************');
+  const { user } = useAuth();
+  const [apiUrl, setApiUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
+
+  // Fetch existing API settings
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('system_settings')
+          .select('api_url, api_key')
+          .limit(1)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+          throw error;
+        }
+        
+        if (data) {
+          setApiUrl(data.api_url);
+          // For security, don't show full API key
+          setApiKey(data.api_key.replace(/^(.{4})(.*)(.{4})$/, '$1•••••••••••$3'));
+        }
+      } catch (error) {
+        console.error('Error fetching settings:', error);
+      }
+    };
+    
+    if (user) {
+      fetchSettings();
+    }
+  }, [user]);
 
   const handleSaveApiSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    toast.success('API configuration saved successfully');
-    setLoading(false);
+    try {
+      // Check if we have existing settings
+      const { data: existingData, error: existingError } = await supabase
+        .from('system_settings')
+        .select('id')
+        .limit(1);
+      
+      if (existingError) throw existingError;
+      
+      // If apiKey contains bullets (•), it means user didn't change it, so don't update it
+      const shouldUpdateKey = !apiKey.includes('•');
+      
+      if (existingData && existingData.length > 0) {
+        // Update existing record
+        const updateData: { api_url: string; api_key?: string; updated_by: string } = {
+          api_url: apiUrl,
+          updated_by: user?.id || ''
+        };
+        
+        if (shouldUpdateKey) {
+          updateData.api_key = apiKey;
+        }
+        
+        const { error } = await supabase
+          .from('system_settings')
+          .update(updateData)
+          .eq('id', existingData[0].id);
+        
+        if (error) throw error;
+      } else {
+        // Create new record
+        const { error } = await supabase
+          .from('system_settings')
+          .insert({
+            api_url: apiUrl,
+            api_key: apiKey,
+            updated_by: user?.id || ''
+          });
+        
+        if (error) throw error;
+      }
+      
+      toast.success('API configuration saved successfully');
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      toast.error('Failed to save API configuration');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestLoading(true);
+    try {
+      // Get current settings from database
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('api_url, api_key')
+        .limit(1)
+        .single();
+      
+      if (error) throw error;
+      
+      // Test the API connection
+      const response = await fetch(`${data.api_url}/instances`, {
+        headers: {
+          'Authorization': `Bearer ${data.api_key}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`);
+      }
+      
+      toast.success('Connection successful! API is responding correctly.');
+    } catch (error) {
+      console.error('Test connection error:', error);
+      toast.error(`Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setTestLoading(false);
+    }
   };
 
   return (
@@ -89,7 +199,13 @@ const Settings = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Button variant="outline">Test Connection</Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleTestConnection}
+                  disabled={testLoading}
+                >
+                  {testLoading ? 'Testing...' : 'Test Connection'}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
